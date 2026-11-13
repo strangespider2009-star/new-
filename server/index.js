@@ -1130,14 +1130,6 @@ app.post(
         v.ownerId === req.user.id
     );
 
-    const profile = driver?.biometricProfileId
-      ? db.biometrics.find(
-          (b) =>
-            b.id === driver.biometricProfileId &&
-            b.ownerId === req.user.id
-        )
-      : null;
-
     const deviceVerificationPassed = Boolean(
       req.session.demoDeviceVerifiedAt &&
       req.session.demoDeviceVerifiedUserId === req.user.id &&
@@ -1149,14 +1141,10 @@ app.post(
 
     const faceResult = facePassed === true;
 
-    const biometricResult =
-      faceResult &&
-      deviceVerificationPassed &&
-      !!profile &&
-      profile.status === "active" &&
-      profile.fingerprintRegistered &&
-      profile.faceRegistered &&
-      profile.simulatedMatch;
+    // Face matching runs locally in the browser for this educational demo.
+    // A client-supplied boolean is not cryptographic proof and must never
+    // be used as the sole authorization check for a real vehicle.
+    const biometricResult = faceResult && deviceVerificationPassed;
 
     const licenceResult =
       !!driver &&
