@@ -8,7 +8,8 @@
     "build": "vite build",
     "start": "node server/index.js",
     "preview": "vite preview",
-    "prebuild": "node scripts/copy-face-models.mjs"
+    "prebuild": "node scripts/copy-face-models.mjs",
+    "predev": "node scripts/copy-face-models.mjs"
   },
   "dependencies": {
     "@simplewebauthn/browser": "^14.0.0",
