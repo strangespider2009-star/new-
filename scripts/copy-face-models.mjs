@@ -1,10 +1,14 @@
-import { cp, mkdir, readdir } from "node:fs/promises";
-import { join } from "node:path";
+
+import fs from "node:fs";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const projectRoot = fileURLToPath(new URL("../", import.meta.url));
+const currentFile = fileURLToPath(import.meta.url);
+const currentDirectory = path.dirname(currentFile);
 
-const source = join(
+const projectRoot = path.resolve(currentDirectory, "..");
+
+const sourceDirectory = path.join(
   projectRoot,
   "node_modules",
   "@vladmandic",
@@ -12,35 +16,37 @@ const source = join(
   "model"
 );
 
-const destination = join(
+const destinationDirectory = path.join(
   projectRoot,
   "public",
   "models"
 );
 
-await mkdir(destination, { recursive: true });
-
-let entries;
-
-try {
-  entries = await readdir(source, { withFileTypes: true });
-} catch {
+if (!fs.existsSync(sourceDirectory)) {
   throw new Error(
-    "Face model directory was not found. Run npm install before npm run build."
+    "Face API model directory not found. Run npm install first."
   );
 }
 
-for (const entry of entries) {
-  await cp(
-    join(source, entry.name),
-    join(destination, entry.name),
-    {
-      recursive: true,
-      force: true
-    }
-  );
+fs.mkdirSync(destinationDirectory, { recursive: true });
+
+const files = fs.readdirSync(sourceDirectory);
+
+let copied = 0;
+
+for (const file of files) {
+  const sourcePath = path.join(sourceDirectory, file);
+  const destinationPath = path.join(destinationDirectory, file);
+
+  if (fs.statSync(sourcePath).isFile()) {
+    fs.copyFileSync(sourcePath, destinationPath);
+    copied++;
+  }
 }
 
-console.log(
-  "Copied " + entries.length + " face model files into public/models."
-);
+if (copied === 0) {
+  throw new Error("No model files were found to copy.");
+}
+
+console.log(`Copied ${copied} face-api model files.`);
+console.log(`Destination: ${destinationDirectory}`);
