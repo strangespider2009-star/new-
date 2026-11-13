@@ -291,7 +291,7 @@ function Verify({data,setNotice,user}) {
 
       <div className="verificationStep">
         <div className="stepTitle"><span className="stepNumber">01</span><div><b>Facial verification demonstration</b><small>Camera face-presence check — not identity recognition</small></div><strong className={facePassed?"good":faceState==="failed"?"bad":""}>{faceState==="passed"?"PASS":faceState==="failed"?"FAIL":faceState==="checking"?"CHECKING":"PENDING"}</strong></div>
-        <video ref={videoRef} className="cameraPreview" autoPlay playsInline muted />
+        <video ref={videoRef} className="cameraPreview" style={{display:faceState==="checking"?"block":"none"}} autoPlay playsInline muted />
         <div className="stepActions">
           <button className="secondary" onClick={runCameraFaceDemo} disabled={busy || faceState==="checking"}>Start camera check</button>
           <button className="mini" onClick={()=>{setFaceState("passed");setMessage("Simulated face check marked PASS for the exhibition.");}}>Simulate PASS</button>
