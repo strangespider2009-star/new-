@@ -1031,6 +1031,25 @@ app.get(/.*/, (req, res, next) => {
   res.sendFile(path.join(DIST_DIR, "index.html"));
 });
 
+// Serve the built React frontend
+const FRONTEND_DIR = path.join(__dirname, "../dist");
+
+app.use(express.static(FRONTEND_DIR));
+
+// Send React routes to index.html
+app.use((req, res, next) => {
+  if (
+    req.method !== "GET" ||
+    req.path.startsWith("/api/") ||
+    req.path.startsWith("/uploads/")
+  ) {
+    return next();
+  }
+
+  res.sendFile(path.join(FRONTEND_DIR, "index.html"), (error) => {
+    if (error) next(error);
+  });
+});
 // --------------------------------------------------
 // ERROR HANDLER
 // --------------------------------------------------
