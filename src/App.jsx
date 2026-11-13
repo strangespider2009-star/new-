@@ -145,7 +145,7 @@ function Verify({data,setNotice,user}) {
   const [bleState,setBleState]=useState("disconnected");
   const [bleName,setBleName]=useState("");
   const [faceState,setFaceState]=useState("pending");
-  const [deviceVerified,setDeviceVerified]=useState(false);
+  const [deviceState,setDeviceState]=useState("pending");
   const [busy,setBusy]=useState(false);
   const [result,setResult]=useState(null);
   const [message,setMessage]=useState("");
@@ -192,10 +192,10 @@ function Verify({data,setNotice,user}) {
       const options=await post("/api/demo/device-auth-options",{});
       const credential=await startAuthentication({optionsJSON:options});
       const response=await post("/api/demo/device-auth-verify",credential);
-      setDeviceVerified(!!response.verified);
+      setDeviceState(response.verified ? "passed" : "failed");
       setMessage("Device user verification completed. The device may have used fingerprint, face recognition, or PIN.");
     } catch(error) {
-      setDeviceVerified(false);
+      setDeviceState("failed");
       setMessage(error.message || "Device verification was not completed.");
     } finally {
       setBusy(false);
@@ -227,7 +227,7 @@ function Verify({data,setNotice,user}) {
         facePassed: faceState === "passed"
       });
       setResult(response);
-      setDeviceVerified(false);
+      setDeviceState("pending");
 
       const command=response.accessGranted ? "SUCCESS" : "FAIL";
       if (bleState === "connected") {
@@ -254,7 +254,7 @@ function Verify({data,setNotice,user}) {
   async function resetDemo() {
     setResult(null);
     setFaceState("pending");
-    setDeviceVerified(false);
+    setDeviceState("pending");
     setMessage("New verification session started.");
     if (bleState === "connected") {
       try {
@@ -268,7 +268,9 @@ function Verify({data,setNotice,user}) {
   }
 
   const facePassed=faceState==="passed";
-  const canCheck=!!vehicleId && !!driverId && facePassed && deviceVerified && !busy;
+  const faceComplete=faceState==="passed" || faceState==="failed";
+  const deviceComplete=deviceState==="passed" || deviceState==="failed";
+  const canCheck=!!vehicleId && !!driverId && faceComplete && deviceComplete && !busy;
 
   return <div className="verifyLayout">
     <section className="panel">
@@ -299,10 +301,11 @@ function Verify({data,setNotice,user}) {
       </div>
 
       <div className="verificationStep">
-        <div className="stepTitle"><span className="stepNumber">02</span><div><b>Device biometric verification</b><small>WebAuthn passkey — fingerprint, face, or device PIN depending on your device</small></div><strong className={deviceVerified?"good":""}>{deviceVerified?"VERIFIED":"PENDING"}</strong></div>
+        <div className="stepTitle"><span className="stepNumber">02</span><div><b>Device biometric verification</b><small>WebAuthn passkey — fingerprint, face, or device PIN depending on your device</small></div><strong className={deviceVerified?"good":""}>{deviceState==="passed"?"VERIFIED":deviceState==="failed"?"FAILED":"PENDING"}</strong></div>
         <div className="stepActions">
           <button className="secondary" onClick={verifyDevice} disabled={busy}>Verify with device</button>
           <button className="mini" onClick={registerDevicePasskey} disabled={busy}>Register passkey</button>
+          <button className="mini dangerBtn" onClick={()=>{setDeviceState("failed");setMessage("Device verification marked FAIL for this demo.");}} disabled={busy}>Simulate FAIL</button>
         </div>
         <small className="muted">Register a passkey once on this account. The browser/device performs verification; the website never receives fingerprint or face data.</small>
       </div>
