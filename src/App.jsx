@@ -301,7 +301,7 @@ function Verify({data,setNotice,user}) {
       </div>
 
       <div className="verificationStep">
-        <div className="stepTitle"><span className="stepNumber">02</span><div><b>Device biometric verification</b><small>WebAuthn passkey — fingerprint, face, or device PIN depending on your device</small></div><strong className={deviceVerified?"good":""}>{deviceState==="passed"?"VERIFIED":deviceState==="failed"?"FAILED":"PENDING"}</strong></div>
+        <div className="stepTitle"><span className="stepNumber">02</span><div><b>Device biometric verification</b><small>WebAuthn passkey — fingerprint, face, or device PIN depending on your device</small></div><strong className={deviceState==="passed"?"good":deviceState==="failed"?"bad":""}>{deviceState==="passed"?"VERIFIED":deviceState==="failed"?"FAILED":"PENDING"}</strong></div>
         <div className="stepActions">
           <button className="secondary" onClick={verifyDevice} disabled={busy}>Verify with device</button>
           <button className="mini" onClick={registerDevicePasskey} disabled={busy}>Register passkey</button>
