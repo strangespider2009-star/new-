@@ -14,13 +14,13 @@
   "dependencies": {
     "@simplewebauthn/browser": "^14.0.0",
     "@simplewebauthn/server": "^13.1.2",
+    "@vladmandic/face-api": "1.7.15",
     "bcryptjs": "^3.0.2",
     "express": "^5.1.0",
     "express-session": "^1.18.2",
     "multer": "^2.0.2",
     "react": "^19.1.0",
-    "react-dom": "^19.1.0",
-    "@vladmandic/face-api": "1.7.15"
+    "react-dom": "^19.1.0"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^5.0.0",
