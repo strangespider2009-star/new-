@@ -23,13 +23,17 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 
 const PORT = process.env.PORT || 3001;
-
 const isProduction = process.env.NODE_ENV === "production";
+
+const FRONTEND_ORIGIN =
+  process.env.FRONTEND_ORIGIN ||
+  "https://smart-drive-guard-frontend.onrender.com";
 
 const RP_ID = process.env.RP_ID || "localhost";
 const ORIGIN = process.env.ORIGIN || "http://localhost:5173";
 
-const SESSION_SECRET = process.env.SESSION_SECRET ||
+const SESSION_SECRET =
+  process.env.SESSION_SECRET ||
   (isProduction ? "" : "development-only-change-this-secret");
 
 if (isProduction && !SESSION_SECRET) {
@@ -43,6 +47,42 @@ if (isProduction && (!process.env.RP_ID || !process.env.ORIGIN)) {
 if (isProduction) {
   app.set("trust proxy", 1);
 }
+
+// --------------------------------------------------
+// CORS MIDDLEWARE
+// IMPORTANT: MUST BE BEFORE JSON AND SESSION
+// --------------------------------------------------
+
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+
+  if (origin && origin === FRONTEND_ORIGIN) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Access-Control-Allow-Credentials", "true");
+
+    res.setHeader(
+      "Access-Control-Allow-Methods",
+      "GET, POST, PATCH, DELETE, OPTIONS"
+    );
+
+    res.setHeader(
+      "Access-Control-Allow-Headers",
+      "Content-Type"
+    );
+
+    res.setHeader("Vary", "Origin");
+  }
+
+  if (req.method === "OPTIONS") {
+    if (origin && origin !== FRONTEND_ORIGIN) {
+      return res.sendStatus(403);
+    }
+
+    return res.sendStatus(204);
+  }
+
+  next();
+});
 
 // --------------------------------------------------
 // DATABASE AND UPLOAD DIRECTORIES
@@ -85,10 +125,14 @@ const writeDB = (db) => {
 const id = () => crypto.randomUUID();
 
 // --------------------------------------------------
-// MIDDLEWARE
+// BODY PARSING
 // --------------------------------------------------
 
 app.use(express.json({ limit: "1mb" }));
+
+// --------------------------------------------------
+// SESSION CONFIGURATION
+// --------------------------------------------------
 
 app.use(
   session({
@@ -105,8 +149,12 @@ app.use(
   })
 );
 
+// --------------------------------------------------
+// UPLOAD CONFIGURATION
 // Demo uploads only.
 // Do not upload real driving licence documents.
+// --------------------------------------------------
+
 app.use("/uploads", express.static(UPLOAD_DIR));
 
 const upload = multer({
@@ -121,9 +169,7 @@ const upload = multer({
       "application/pdf"
     ];
 
-    const valid = allowedTypes.includes(file.mimetype);
-
-    if (!valid) {
+    if (!allowedTypes.includes(file.mimetype)) {
       return cb(
         new Error("Only JPG, PNG or PDF files are allowed.")
       );
@@ -131,33 +177,6 @@ const upload = multer({
 
     cb(null, true);
   }
-});
-
-
-const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN;
-
-app.use((req, res, next) => {
-  const origin = req.headers.origin;
-
-  if (origin && origin === FRONTEND_ORIGIN) {
-    res.setHeader("Access-Control-Allow-Origin", origin);
-    res.setHeader("Access-Control-Allow-Credentials", "true");
-    res.setHeader(
-      "Access-Control-Allow-Methods",
-      "GET, POST, PATCH, DELETE, OPTIONS"
-    );
-    res.setHeader(
-      "Access-Control-Allow-Headers",
-      "Content-Type"
-    );
-    res.setHeader("Vary", "Origin");
-  }
-
-  if (req.method === "OPTIONS") {
-    return res.sendStatus(204);
-  }
-
-  next();
 });
 
 // --------------------------------------------------
@@ -177,16 +196,20 @@ function currentUser(req) {
 }
 
 function requireAuth(req, res, next) {
-  const user = currentUser(req);
+  try {
+    const user = currentUser(req);
 
-  if (!user) {
-    return res.status(401).json({
-      error: "Please sign in."
-    });
+    if (!user) {
+      return res.status(401).json({
+        error: "Please sign in."
+      });
+    }
+
+    req.user = user;
+    next();
+  } catch (error) {
+    next(error);
   }
-
-  req.user = user;
-  next();
 }
 
 function publicUser(user) {
@@ -224,7 +247,7 @@ app.get("/api/health", (_req, res) => {
 // USER REGISTRATION
 // --------------------------------------------------
 
-app.post("/api/auth/register", async (req, res) => {
+app.post("/api/auth/register", async (req, res, next) => {
   try {
     const {
       name,
@@ -266,8 +289,8 @@ app.post("/api/auth/register", async (req, res) => {
 
     const user = {
       id: id(),
-      name,
-      email: String(email).toLowerCase(),
+      name: String(name).trim(),
+      email: String(email).trim().toLowerCase(),
       role,
       passwordHash: await bcrypt.hash(password, 12),
       passkeys: [],
@@ -279,13 +302,23 @@ app.post("/api/auth/register", async (req, res) => {
 
     req.session.userId = user.id;
 
-    res.json({
-      user: publicUser(user)
+    req.session.save((error) => {
+      if (error) {
+        console.error("Registration session error:", error);
+
+        return res.status(500).json({
+          error: "Account created, but session could not be saved. Please sign in."
+        });
+      }
+
+      res.status(201).json({
+        user: publicUser(user)
+      });
     });
+
   } catch (error) {
-    res.status(500).json({
-      error: "Registration failed."
-    });
+    console.error("Registration error:", error);
+    next(error);
   }
 });
 
@@ -293,16 +326,19 @@ app.post("/api/auth/register", async (req, res) => {
 // USER LOGIN
 // --------------------------------------------------
 
-app.post("/api/auth/login", async (req, res) => {
+app.post("/api/auth/login", async (req, res, next) => {
   try {
     const {
       email,
       password
     } = req.body || {};
 
+    const normalizedEmail = String(email || "")
+      .trim()
+      .toLowerCase();
+
     const user = readDB().users.find(
-      (u) =>
-        u.email === String(email || "").toLowerCase()
+      (u) => u.email === normalizedEmail
     );
 
     if (
@@ -319,26 +355,53 @@ app.post("/api/auth/login", async (req, res) => {
 
     req.session.userId = user.id;
 
-    res.json({
-      user: publicUser(user)
+    req.session.save((error) => {
+      if (error) {
+        console.error("Login session error:", error);
+
+        return res.status(500).json({
+          error: "Could not save login session."
+        });
+      }
+
+      res.json({
+        user: publicUser(user)
+      });
     });
+
   } catch (error) {
-    res.status(500).json({
-      error: "Login failed."
-    });
+    console.error("Login error:", error);
+    next(error);
   }
 });
 
 // --------------------------------------------------
-// LOGOUT AND CURRENT USER
+// LOGOUT
 // --------------------------------------------------
 
 app.post("/api/auth/logout", (req, res) => {
-  req.session.destroy(() => {
-    res.clearCookie("sdg.sid");
+  req.session.destroy((error) => {
+    if (error) {
+      console.error("Logout error:", error);
+
+      return res.status(500).json({
+        error: "Could not log out."
+      });
+    }
+
+    res.clearCookie("sdg.sid", {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: isProduction
+    });
+
     res.json({ ok: true });
   });
 });
+
+// --------------------------------------------------
+// CURRENT USER
+// --------------------------------------------------
 
 app.get("/api/me", (req, res) => {
   const user = currentUser(req);
@@ -349,7 +412,7 @@ app.get("/api/me", (req, res) => {
 });
 
 // --------------------------------------------------
-// PASSKEY REGISTRATION
+// PASSKEY REGISTRATION OPTIONS
 // --------------------------------------------------
 
 app.post(
@@ -379,13 +442,20 @@ app.post(
       req.session.regChallenge = options.challenge;
 
       res.json(options);
+
     } catch (error) {
+      console.error("Passkey options error:", error);
+
       res.status(500).json({
         error: "Could not generate passkey options."
       });
     }
   }
 );
+
+// --------------------------------------------------
+// PASSKEY REGISTRATION VERIFICATION
+// --------------------------------------------------
 
 app.post(
   "/api/passkey/register-verify",
@@ -416,6 +486,12 @@ app.post(
         (u) => u.id === req.user.id
       );
 
+      if (!user) {
+        return res.status(404).json({
+          error: "User not found."
+        });
+      }
+
       user.passkeys ||= [];
 
       user.passkeys.push({
@@ -432,7 +508,10 @@ app.post(
       delete req.session.regChallenge;
 
       res.json({ verified: true });
+
     } catch (error) {
+      console.error("Passkey verification error:", error);
+
       res.status(400).json({
         error: error.message || "Could not register passkey."
       });
@@ -441,14 +520,14 @@ app.post(
 );
 
 // --------------------------------------------------
-// PASSKEY LOGIN
+// PASSKEY LOGIN OPTIONS
 // --------------------------------------------------
 
 app.post("/api/passkey/auth-options", async (req, res) => {
   try {
     const email = String(
       req.body.email || ""
-    ).toLowerCase();
+    ).trim().toLowerCase();
 
     const user = readDB().users.find(
       (u) => u.email === email
@@ -473,12 +552,19 @@ app.post("/api/passkey/auth-options", async (req, res) => {
     req.session.passkeyUserId = user.id;
 
     res.json(options);
+
   } catch (error) {
+    console.error("Passkey login options error:", error);
+
     res.status(500).json({
       error: "Could not generate authentication options."
     });
   }
 });
+
+// --------------------------------------------------
+// PASSKEY LOGIN VERIFICATION
+// --------------------------------------------------
 
 app.post("/api/passkey/auth-verify", async (req, res) => {
   try {
@@ -540,7 +626,10 @@ app.post("/api/passkey/auth-verify", async (req, res) => {
       user: publicUser(user),
       verified: true
     });
+
   } catch (error) {
+    console.error("Passkey login verification error:", error);
+
     res.status(400).json({
       error: error.message || "Passkey verification failed."
     });
@@ -548,91 +637,124 @@ app.post("/api/passkey/auth-verify", async (req, res) => {
 });
 
 // --------------------------------------------------
-// DEVICE BIOMETRIC STEP FOR EXHIBITION VERIFICATION
+// DEVICE BIOMETRIC STEP
 // --------------------------------------------------
 
-app.post("/api/demo/device-auth-options", requireAuth, async (req, res) => {
-  try {
-    const passkeys = req.user.passkeys || [];
-    if (!passkeys.length) {
-      return res.status(400).json({
-        error: "No passkey is registered. Use Register passkey first."
+app.post(
+  "/api/demo/device-auth-options",
+  requireAuth,
+  async (req, res) => {
+    try {
+      const passkeys = req.user.passkeys || [];
+
+      if (!passkeys.length) {
+        return res.status(400).json({
+          error: "No passkey is registered. Use Register passkey first."
+        });
+      }
+
+      const options = await generateAuthenticationOptions({
+        rpID: RP_ID,
+        allowCredentials: passkeys.map((p) => ({
+          id: p.id,
+          transports: p.transports
+        })),
+        userVerification: "required"
+      });
+
+      req.session.demoDeviceChallenge = options.challenge;
+      req.session.demoDeviceUserId = req.user.id;
+
+      res.json(options);
+
+    } catch (error) {
+      console.error("Device auth options error:", error);
+
+      res.status(500).json({
+        error: error.message || "Could not start device verification."
       });
     }
-
-    const options = await generateAuthenticationOptions({
-      rpID: RP_ID,
-      allowCredentials: passkeys.map((p) => ({
-        id: p.id,
-        transports: p.transports
-      })),
-      userVerification: "required"
-    });
-
-    req.session.demoDeviceChallenge = options.challenge;
-    req.session.demoDeviceUserId = req.user.id;
-    res.json(options);
-  } catch (error) {
-    res.status(500).json({
-      error: error.message || "Could not start device verification."
-    });
   }
-});
+);
 
-app.post("/api/demo/device-auth-verify", requireAuth, async (req, res) => {
-  try {
-    if (
-      !req.session.demoDeviceChallenge ||
-      req.session.demoDeviceUserId !== req.user.id
-    ) {
-      return res.status(400).json({
-        error: "Device verification expired. Start the verification again."
+// --------------------------------------------------
+// DEVICE BIOMETRIC VERIFICATION
+// --------------------------------------------------
+
+app.post(
+  "/api/demo/device-auth-verify",
+  requireAuth,
+  async (req, res) => {
+    try {
+      if (
+        !req.session.demoDeviceChallenge ||
+        req.session.demoDeviceUserId !== req.user.id
+      ) {
+        return res.status(400).json({
+          error: "Device verification expired. Start the verification again."
+        });
+      }
+
+      const db = readDB();
+
+      const user = db.users.find(
+        (u) => u.id === req.user.id
+      );
+
+      const credential = (user?.passkeys || []).find(
+        (p) => p.id === req.body.id
+      );
+
+      if (!credential) {
+        return res.status(401).json({
+          error: "Unknown device passkey."
+        });
+      }
+
+      const verification = await verifyAuthenticationResponse({
+        response: req.body,
+        expectedChallenge: req.session.demoDeviceChallenge,
+        expectedOrigin: ORIGIN,
+        expectedRPID: RP_ID,
+        credential: {
+          id: credential.id,
+          publicKey: new Uint8Array(
+            Buffer.from(credential.publicKey, "base64")
+          ),
+          counter: credential.counter,
+          transports: credential.transports
+        },
+        requireUserVerification: true
+      });
+
+      if (!verification.verified) {
+        return res.status(401).json({
+          error: "Device verification failed."
+        });
+      }
+
+      credential.counter =
+        verification.authenticationInfo.newCounter;
+
+      writeDB(db);
+
+      req.session.demoDeviceVerifiedAt = Date.now();
+      req.session.demoDeviceVerifiedUserId = req.user.id;
+
+      delete req.session.demoDeviceChallenge;
+      delete req.session.demoDeviceUserId;
+
+      res.json({ verified: true });
+
+    } catch (error) {
+      console.error("Device verification error:", error);
+
+      res.status(400).json({
+        error: error.message || "Device verification failed."
       });
     }
-
-    const db = readDB();
-    const user = db.users.find((u) => u.id === req.user.id);
-    const credential = (user?.passkeys || []).find(
-      (p) => p.id === req.body.id
-    );
-
-    if (!credential) {
-      return res.status(401).json({ error: "Unknown device passkey." });
-    }
-
-    const verification = await verifyAuthenticationResponse({
-      response: req.body,
-      expectedChallenge: req.session.demoDeviceChallenge,
-      expectedOrigin: ORIGIN,
-      expectedRPID: RP_ID,
-      credential: {
-        id: credential.id,
-        publicKey: new Uint8Array(Buffer.from(credential.publicKey, "base64")),
-        counter: credential.counter,
-        transports: credential.transports
-      },
-      requireUserVerification: true
-    });
-
-    if (!verification.verified) {
-      return res.status(401).json({ error: "Device verification failed." });
-    }
-
-    credential.counter = verification.authenticationInfo.newCounter;
-    writeDB(db);
-
-    req.session.demoDeviceVerifiedAt = Date.now();
-    req.session.demoDeviceVerifiedUserId = req.user.id;
-    delete req.session.demoDeviceChallenge;
-    delete req.session.demoDeviceUserId;
-
-    res.json({ verified: true });
-  } catch (error) {
-    res.status(400).json({
-      error: error.message || "Device verification failed."
-    });
   }
-});
+);
 
 // --------------------------------------------------
 // DASHBOARD
@@ -793,6 +915,10 @@ app.post(
   }
 );
 
+// --------------------------------------------------
+// DRIVER APPROVAL
+// --------------------------------------------------
+
 app.patch(
   "/api/drivers/:id/approval",
   requireAuth,
@@ -823,6 +949,10 @@ app.patch(
     res.json({ driver });
   }
 );
+
+// --------------------------------------------------
+// DELETE DRIVER
+// --------------------------------------------------
 
 app.delete(
   "/api/drivers/:id",
@@ -887,6 +1017,10 @@ app.post(
   }
 );
 
+// --------------------------------------------------
+// UPDATE BIOMETRIC PROFILE
+// --------------------------------------------------
+
 app.patch(
   "/api/biometrics/:id",
   requireAuth,
@@ -924,6 +1058,10 @@ app.patch(
   }
 );
 
+// --------------------------------------------------
+// DELETE BIOMETRIC PROFILE
+// --------------------------------------------------
+
 app.delete(
   "/api/biometrics/:id",
   requireAuth,
@@ -953,35 +1091,47 @@ app.post(
   "/api/access/check",
   requireAuth,
   async (req, res) => {
-    const { driverId, vehicleId, facePassed } = req.body || {};
+    const {
+      driverId,
+      vehicleId,
+      facePassed
+    } = req.body || {};
+
     const db = readDB();
 
     const driver = db.drivers.find(
-      (d) => d.id === driverId && d.ownerId === req.user.id
+      (d) =>
+        d.id === driverId &&
+        d.ownerId === req.user.id
     );
 
     const vehicle = db.vehicles.find(
-      (v) => v.id === vehicleId && v.ownerId === req.user.id
+      (v) =>
+        v.id === vehicleId &&
+        v.ownerId === req.user.id
     );
 
     const profile = driver?.biometricProfileId
       ? db.biometrics.find(
-          (b) => b.id === driver.biometricProfileId && b.ownerId === req.user.id
+          (b) =>
+            b.id === driver.biometricProfileId &&
+            b.ownerId === req.user.id
         )
       : null;
 
-    // A successful WebAuthn assertion is stored server-side and expires quickly.
+    // A successful device authentication is stored
+    // server-side and expires after two minutes.
+
     const deviceVerificationPassed = Boolean(
       req.session.demoDeviceVerifiedAt &&
       req.session.demoDeviceVerifiedUserId === req.user.id &&
       Date.now() - req.session.demoDeviceVerifiedAt <= 120000
     );
 
-    // Consume the one-time device verification for this access attempt.
+    // Consume one-time device verification.
     delete req.session.demoDeviceVerifiedAt;
     delete req.session.demoDeviceVerifiedUserId;
 
-    // Face presence is a demonstration signal from the browser, not identity matching.
     const faceResult = facePassed === true;
 
     const biometricResult =
@@ -1033,68 +1183,65 @@ app.post(
         faceResult,
         deviceVerificationPassed
       },
-      logic: [biometricResult, licenceResult, ownerApproval]
+      logic: [
+        biometricResult,
+        licenceResult,
+        ownerApproval
+      ]
     });
   }
 );
 
 // --------------------------------------------------
-// PRODUCTION FRONTEND
+// API NOT FOUND HANDLER
+// --------------------------------------------------
+
+app.use("/api", (req, res) => {
+  res.status(404).json({
+    error: "API endpoint not found."
+  });
+});
+
+// --------------------------------------------------
+// SERVE FRONTEND BUILD IF PRESENT
 // --------------------------------------------------
 
 const DIST_DIR = path.join(__dirname, "..", "dist");
 
-if (isProduction && !fs.existsSync(path.join(DIST_DIR, "index.html"))) {
-  throw new Error("Frontend build not found. Run npm run build first.");
+if (fs.existsSync(path.join(DIST_DIR, "index.html"))) {
+  app.use(express.static(DIST_DIR));
+
+  app.get(/.*/, (req, res) => {
+    res.sendFile(path.join(DIST_DIR, "index.html"));
+  });
 }
 
-app.use(express.static(DIST_DIR));
-
-app.get(/.*/, (req, res, next) => {
-  if (req.path.startsWith("/api/")) {
-    return next();
-  }
-
-  res.sendFile(path.join(DIST_DIR, "index.html"));
-});
-
-// Serve the built React frontend
-const FRONTEND_DIR = path.join(__dirname, "../dist");
-
-app.use(express.static(FRONTEND_DIR));
-
-// Send React routes to index.html
-app.use((req, res, next) => {
-  if (
-    req.method !== "GET" ||
-    req.path.startsWith("/api/") ||
-    req.path.startsWith("/uploads/")
-  ) {
-    return next();
-  }
-
-  res.sendFile(path.join(FRONTEND_DIR, "index.html"), (error) => {
-    if (error) next(error);
-  });
-});
 // --------------------------------------------------
-// ERROR HANDLER
+// GLOBAL ERROR HANDLER
 // --------------------------------------------------
 
 app.use((err, _req, res, _next) => {
   console.error("Server error:", err);
 
-  res.status(400).json({
-    error: err.message || "Request failed."
+  if (res.headersSent) {
+    return;
+  }
+
+  res.status(err.status || 500).json({
+    error: err.message || "Internal server error."
   });
 });
 
 // --------------------------------------------------
-// START SERVER - ONLY ONE LISTENER
+// START SERVER
 // --------------------------------------------------
 
 app.listen(PORT, "0.0.0.0", () => {
   console.log(
     `SMART DRIVE GUARD API listening on port ${PORT}`
+  );
+
+  console.log(
+    `Allowed frontend origin: ${FRONTEND_ORIGIN}`
   );
 });
