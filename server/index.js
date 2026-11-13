@@ -50,7 +50,6 @@ if (isProduction) {
 
 // --------------------------------------------------
 // CORS MIDDLEWARE
-// IMPORTANT: MUST BE BEFORE JSON AND SESSION
 // --------------------------------------------------
 
 app.use((req, res, next) => {
@@ -132,6 +131,7 @@ app.use(express.json({ limit: "1mb" }));
 
 // --------------------------------------------------
 // SESSION CONFIGURATION
+// UPDATED: CROSS-ORIGIN SESSION COOKIE
 // --------------------------------------------------
 
 app.use(
@@ -142,8 +142,8 @@ app.use(
     saveUninitialized: false,
     cookie: {
       httpOnly: true,
-      sameSite: "lax",
       secure: isProduction,
+      sameSite: isProduction ? "none" : "lax",
       maxAge: 8 * 60 * 60 * 1000
     }
   })
@@ -151,8 +151,6 @@ app.use(
 
 // --------------------------------------------------
 // UPLOAD CONFIGURATION
-// Demo uploads only.
-// Do not upload real driving licence documents.
 // --------------------------------------------------
 
 app.use("/uploads", express.static(UPLOAD_DIR));
@@ -377,6 +375,7 @@ app.post("/api/auth/login", async (req, res, next) => {
 
 // --------------------------------------------------
 // LOGOUT
+// UPDATED: MATCH COOKIE SETTINGS
 // --------------------------------------------------
 
 app.post("/api/auth/logout", (req, res) => {
@@ -391,8 +390,8 @@ app.post("/api/auth/logout", (req, res) => {
 
     res.clearCookie("sdg.sid", {
       httpOnly: true,
-      sameSite: "lax",
-      secure: isProduction
+      secure: isProduction,
+      sameSite: isProduction ? "none" : "lax"
     });
 
     res.json({ ok: true });
@@ -622,9 +621,19 @@ app.post("/api/passkey/auth-verify", async (req, res) => {
     delete req.session.authChallenge;
     delete req.session.passkeyUserId;
 
-    res.json({
-      user: publicUser(user),
-      verified: true
+    req.session.save((error) => {
+      if (error) {
+        console.error("Passkey session error:", error);
+
+        return res.status(500).json({
+          error: "Could not save passkey login session."
+        });
+      }
+
+      res.json({
+        user: publicUser(user),
+        verified: true
+      });
     });
 
   } catch (error) {
@@ -744,7 +753,17 @@ app.post(
       delete req.session.demoDeviceChallenge;
       delete req.session.demoDeviceUserId;
 
-      res.json({ verified: true });
+      req.session.save((error) => {
+        if (error) {
+          console.error("Device session error:", error);
+
+          return res.status(500).json({
+            error: "Could not save device verification."
+          });
+        }
+
+        res.json({ verified: true });
+      });
 
     } catch (error) {
       console.error("Device verification error:", error);
@@ -1119,16 +1138,12 @@ app.post(
         )
       : null;
 
-    // A successful device authentication is stored
-    // server-side and expires after two minutes.
-
     const deviceVerificationPassed = Boolean(
       req.session.demoDeviceVerifiedAt &&
       req.session.demoDeviceVerifiedUserId === req.user.id &&
       Date.now() - req.session.demoDeviceVerifiedAt <= 120000
     );
 
-    // Consume one-time device verification.
     delete req.session.demoDeviceVerifiedAt;
     delete req.session.demoDeviceVerifiedUserId;
 
@@ -1172,22 +1187,32 @@ app.post(
     db.logs.push(log);
     writeDB(db);
 
-    res.json({
-      faceResult,
-      deviceVerificationPassed,
-      biometricResult,
-      licenceResult,
-      ownerApproval,
-      accessGranted: granted,
-      biometricChecks: {
+    req.session.save((error) => {
+      if (error) {
+        console.error("Access check session error:", error);
+
+        return res.status(500).json({
+          error: "Could not save access check session."
+        });
+      }
+
+      res.json({
         faceResult,
-        deviceVerificationPassed
-      },
-      logic: [
+        deviceVerificationPassed,
         biometricResult,
         licenceResult,
-        ownerApproval
-      ]
+        ownerApproval,
+        accessGranted: granted,
+        biometricChecks: {
+          faceResult,
+          deviceVerificationPassed
+        },
+        logic: [
+          biometricResult,
+          licenceResult,
+          ownerApproval
+        ]
+      });
     });
   }
 );
