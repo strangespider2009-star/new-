@@ -14,7 +14,7 @@
 .stepTitle>strong{font-size:11px}
 .stepNumber{display:grid;place-items:center;width:30px;height:30px;border-radius:9px;background:#1c5748;color:#6ce5b3;font-weight:900}
 .stepActions{display:flex;gap:8px;flex-wrap:wrap;margin-top:13px}
-.cameraPreview{display:none;width:100%;max-height:220px;object-fit:cover;border-radius:10px;background:#07101c;margin-top:12px}
+.cameraPreview{display:block;width:100%;max-height:220px;object-fit:cover;border-radius:10px;background:#07101c;margin-top:12px}
 .finalActions{margin-top:20px}
 .infoPanel{position:sticky;top:92px}
 .infoPanel ol{padding-left:20px;color:#c2d0df;font-size:13px;line-height:1.8}
