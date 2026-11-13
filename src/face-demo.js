@@ -36,10 +36,16 @@ export async function startFaceCamera(videoElement) {
     audio: false
   });
 
-  videoElement.srcObject = stream;
-  await videoElement.play();
-  await loadFaceModels();
-  return stream;
+  try {
+    videoElement.srcObject = stream;
+    await videoElement.play();
+    await loadFaceModels();
+    return stream;
+  } catch (error) {
+    stream.getTracks().forEach(track => track.stop());
+    videoElement.srcObject = null;
+    throw error;
+  }
 }
 
 export function stopFaceCamera(videoElement) {
