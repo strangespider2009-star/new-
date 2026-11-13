@@ -1,4 +1,3 @@
-
 {
   "name": "smart-drive-guard",
   "version": "1.0.0",
@@ -11,6 +10,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@simplewebauthn/browser": "^14.0.0",
     "@simplewebauthn/server": "^13.1.2",
     "bcryptjs": "^3.0.2",
     "express": "^5.1.0",
