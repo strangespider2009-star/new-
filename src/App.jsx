@@ -3,10 +3,27 @@ import { startRegistration, startAuthentication } from "@simplewebauthn/browser"
 import { connectBLE, sendBLECommand, disconnectBLE } from "./ble.js";
 import { detectFacePresence } from "./face-demo.js";
 
+
+const API_BASE = (
+  import.meta.env.VITE_API_URL ||
+  "http://localhost:3001"
+).replace(/\/+$/, "");
+
 const api = async (url, options = {}) => {
-  const res = await fetch(url, { credentials: "include", ...options, headers: options.body instanceof FormData ? options.headers : { "Content-Type": "application/json", ...(options.headers || {}) } });
+  const res = await fetch(`${API_BASE}${url}`, {
+    credentials: "include",
+    ...options,
+    headers: options.body instanceof FormData
+      ? options.headers
+      : {
+          "Content-Type": "application/json",
+          ...(options.headers || {})
+        }
+  });
   const data = await res.json();
-  if (!res.ok) throw new Error(data.error || "Request failed");
+  if (!res.ok) {
+    throw new Error(data.error || "Request failed");
+  }
   return data;
 };
 const post = (url, body) => api(url, { method: "POST", body: JSON.stringify(body) });
