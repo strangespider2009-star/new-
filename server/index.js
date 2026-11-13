@@ -133,6 +133,33 @@ const upload = multer({
   }
 });
 
+
+const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN;
+
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+
+  if (origin && origin === FRONTEND_ORIGIN) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Access-Control-Allow-Credentials", "true");
+    res.setHeader(
+      "Access-Control-Allow-Methods",
+      "GET, POST, PATCH, DELETE, OPTIONS"
+    );
+    res.setHeader(
+      "Access-Control-Allow-Headers",
+      "Content-Type"
+    );
+    res.setHeader("Vary", "Origin");
+  }
+
+  if (req.method === "OPTIONS") {
+    return res.sendStatus(204);
+  }
+
+  next();
+});
+
 // --------------------------------------------------
 // AUTHENTICATION HELPERS
 // --------------------------------------------------
