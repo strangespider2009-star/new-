@@ -87,3 +87,38 @@ git branch -M main
 git remote add origin https://github.com/YOUR-USERNAME/smart-drive-guard.git
 git push -u origin main
 ```
+
+
+## Exhibition biometric + BLE demo
+
+This branch adds a **demonstration** verification screen and BLE UART output.
+
+### Verification flow
+1. Register a passkey from the signed-in account using **Register passkey**.
+2. Create a dummy biometric profile with face and fingerprint enrollment flags enabled.
+3. Add a driver, associate that profile, and approve the driver.
+4. Open **Verify Biometrics**.
+5. Connect to an HM-10-compatible BLE UART module from a supported Web Bluetooth browser.
+6. Run the camera face-presence demonstration (or use the clearly labelled simulation buttons if the browser lacks FaceDetector).
+7. Complete **Verify with device**. WebAuthn may use fingerprint, face recognition, or device PIN depending on the authenticator. The website does not learn which modality was used and never receives biometric data.
+8. Select the vehicle and driver, then choose **Evaluate & send to Arduino**.
+
+The backend requires a recent, server-verified WebAuthn assertion for the device-verification step. That one-time verification expires after two minutes and is consumed by the next access check. The face-presence result is a client-side exhibition signal and is not identity matching.
+
+### BLE hardware
+- Use an **HM-10-compatible BLE UART module** with service UUID `FFE0` and writable characteristic UUID `FFE1` (full 128-bit UUIDs are in `src/ble.js`).
+- **HC-05 is not compatible with Web Bluetooth** because it uses Bluetooth Classic SPP. Do not try to pair an HC-05 from this browser flow.
+- The module must expose a writable UART characteristic. HM-10 clones vary; verify the UUIDs and write properties for your exact board.
+- Open `firmware/SmartDriverGuardBLE/SmartDriverGuardBLE.ino` in Arduino IDE and upload it to Arduino UNO.
+- BLE TXD -> UNO D10; BLE RXD <- UNO D11 through a 5V-to-3.3V divider; common GND; power the module according to its breakout-board specification.
+- Green LED -> D6 through 220 ohm resistor; red LED -> D7 through 220 ohm resistor; passive buzzer -> D8.
+- The website sends newline-terminated `SUCCESS`, `FAIL`, or `RESET` commands.
+
+### Browser requirements
+Web Bluetooth requires HTTPS (or localhost), a supported browser, and a user gesture to open the device chooser. Chrome on Android is a typical target. iOS Safari does not currently provide the same Web Bluetooth support. Camera access also requires HTTPS (or localhost). The experimental FaceDetector API is not available in every browser, so the screen offers an explicitly simulated face result as a fallback.
+
+### Demonstration limitations
+- Camera face presence is not facial identity recognition.
+- WebAuthn confirms device user verification but may use fingerprint, face, or PIN; the website cannot force or identify a fingerprint-only modality.
+- Dummy biometric profile fields are enrollment flags, not biometric templates.
+- This is an educational exhibition prototype. Do not connect it to vehicle ignition, steering, braking, or other safety-critical systems.
