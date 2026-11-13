@@ -11,7 +11,14 @@ import {
   disconnectBLE
 } from "./ble.js";
 
-import { detectFacePresence } from "./face-demo.js";
+import {
+  startFaceCamera,
+  stopFaceCamera,
+  enrollFace,
+  recognizeFace,
+  hasFaceTemplate,
+  deleteFaceTemplate
+} from "./face-demo.js";
 
 // =====================================================
 // API CONFIGURATION
@@ -1318,694 +1325,387 @@ function Biometrics({ data, act }) {
 // =====================================================
 
 function Verify({ data, setNotice }) {
-
-  const [vehicleId, setVehicle] = useState(
-    data.vehicles[0]?.id || ""
-  );
-
+  const [vehicleId, setVehicle] = useState(data.vehicles[0]?.id || "");
   const [driverId, setDriver] = useState("");
-  const [bleState, setBleState] = useState("disconnected");
-  const [bleName, setBleName] = useState("");
-
+  const [serialState, setSerialState] = useState("disconnected");
+  const [serialName, setSerialName] = useState("");
+  const [cameraActive, setCameraActive] = useState(false);
   const [faceState, setFaceState] = useState("pending");
   const [deviceState, setDeviceState] = useState("pending");
-
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState(null);
   const [message, setMessage] = useState("");
-
   const videoRef = React.useRef(null);
+  const selectedDriver = data.drivers.find(d => d.id === driverId);
+  const enrolled = driverId ? hasFaceTemplate(driverId) : false;
 
   useEffect(() => {
-    return () => disconnectBLE();
+    return () => {
+      stopFaceCamera(videoRef.current);
+      disconnectBLE();
+    };
   }, []);
-
-  // ---------------------------------------------------
-  // BLE CONNECTION
-  // ---------------------------------------------------
 
   async function connectHardware() {
     setMessage("");
-
     try {
       const name = await connectBLE(() => {
-        setBleState("disconnected");
-        setBleName("");
-
-        setMessage(
-          "BLE module disconnected. No further commands can be sent."
-        );
+        setSerialState("disconnected");
+        setSerialName("");
+        setMessage("HC-05 serial connection disconnected.");
       });
-
-      setBleName(name);
-      setBleState("connected");
-
+      setSerialName(name);
+      setSerialState("connected");
       setMessage("Connected to " + name + ".");
-
     } catch (error) {
-      setBleState("disconnected");
-      setMessage(error.message);
+      setSerialState("disconnected");
+      setMessage(error.message || "Could not connect to HC-05.");
     }
   }
 
-  // ---------------------------------------------------
-  // CAMERA FACE PRESENCE DEMO
-  // ---------------------------------------------------
-
-  async function runCameraFaceDemo() {
+  async function startCamera() {
     setMessage("");
-    setFaceState("checking");
-
     try {
-      const found = await detectFacePresence(videoRef.current);
-
-      setFaceState(found ? "passed" : "failed");
-
-      setMessage(
-        found
-          ? "A face was detected by the camera. This is face-presence detection, not identity matching."
-          : "No face was detected. Try again with your face clearly visible."
-      );
-
+      await startFaceCamera(videoRef.current);
+      setCameraActive(true);
+      setMessage("Camera started. Position one face clearly in the frame.");
     } catch (error) {
-      setFaceState("unsupported");
-      setMessage(error.message);
+      setCameraActive(false);
+      setMessage(error.message || "Could not start camera.");
     }
   }
 
-  // ---------------------------------------------------
-  // DEVICE VERIFICATION
-  // ---------------------------------------------------
+  function stopCamera() {
+    stopFaceCamera(videoRef.current);
+    setCameraActive(false);
+  }
 
-  async function verifyDevice() {
+  async function enrollSelectedFace() {
+    if (!driverId) {
+      setMessage("Select a driver before enrolling a face.");
+      return;
+    }
+    if (!cameraActive) {
+      setMessage("Start the camera before enrolling.");
+      return;
+    }
     setBusy(true);
     setMessage("");
-
     try {
-      const options = await post(
-        "/api/demo/device-auth-options",
-        {}
-      );
-
-      const credential = await startAuthentication({
-        optionsJSON: options
-      });
-
-      const response = await post(
-        "/api/demo/device-auth-verify",
-        credential
-      );
-
-      setDeviceState(
-        response.verified ? "passed" : "failed"
-      );
-
-      setMessage(
-        "Device user verification completed. The device may have used fingerprint, face recognition, or PIN."
-      );
-
+      await enrollFace(videoRef.current, driverId);
+      setFaceState("pending");
+      setMessage("Face template enrolled locally for " + (selectedDriver?.name || "the selected driver") + ". It was not uploaded to the server.");
     } catch (error) {
-      setDeviceState("failed");
-
-      setMessage(
-        error.message || "Device verification was not completed."
-      );
-
+      setMessage(error.message || "Face enrollment failed.");
     } finally {
+      stopCamera();
       setBusy(false);
     }
   }
 
-  // ---------------------------------------------------
-  // REGISTER DEVICE PASSKEY
-  // ---------------------------------------------------
+  async function runFaceRecognition() {
+    if (!driverId) {
+      setMessage("Select a driver before face verification.");
+      return;
+    }
+    if (!enrolled) {
+      setFaceState("failed");
+      setMessage("No face template is enrolled for this driver on this browser. Enroll the face first.");
+      return;
+    }
+    if (!cameraActive) {
+      setMessage("Start the camera before verifying the face.");
+      return;
+    }
+    setBusy(true);
+    setFaceState("checking");
+    setMessage("");
+    try {
+      const match = await recognizeFace(videoRef.current, driverId);
+      setFaceState(match.matched ? "passed" : "failed");
+      setMessage(
+        match.matched
+          ? "Face matched the locally enrolled template. Demo distance: " + match.distance
+          : "Face did not match the enrolled template. Demo distance: " + match.distance
+      );
+    } catch (error) {
+      setFaceState("failed");
+      setMessage(error.message || "Face recognition failed.");
+    } finally {
+      stopCamera();
+      setBusy(false);
+    }
+  }
+
+  async function verifyDevice() {
+    setBusy(true);
+    setDeviceState("checking");
+    setMessage("");
+    try {
+      const options = await post("/api/demo/device-auth-options", {});
+      const credential = await startAuthentication({ optionsJSON: options });
+      const response = await post("/api/demo/device-auth-verify", credential);
+      setDeviceState(response.verified ? "passed" : "failed");
+      setMessage("Device user verification completed. The device may have used its configured biometric or PIN.");
+    } catch (error) {
+      setDeviceState("failed");
+      setMessage(error.message || "Device verification was not completed.");
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function registerDevicePasskey() {
     setBusy(true);
     setMessage("");
-
     try {
-      const options = await post(
-        "/api/passkey/register-options",
-        {}
-      );
-
-      const credential = await startRegistration({
-        optionsJSON: options
-      });
-
-      await post(
-        "/api/passkey/register-verify",
-        credential
-      );
-
-      setMessage(
-        "Passkey registered. Now complete device verification."
-      );
-
+      const options = await post("/api/passkey/register-options", {});
+      const credential = await startRegistration({ optionsJSON: options });
+      await post("/api/passkey/register-verify", credential);
+      setMessage("Passkey registered. Now run device verification.");
     } catch (error) {
-      setMessage(
-        error.message || "Passkey registration failed."
-      );
-
+      setMessage(error.message || "Passkey registration failed.");
     } finally {
       setBusy(false);
     }
   }
-
-  // ---------------------------------------------------
-  // ACCESS CHECK
-  // ---------------------------------------------------
 
   async function runAccessCheck() {
     setBusy(true);
     setMessage("");
-
     try {
-      const response = await post(
-        "/api/access/check",
-        {
-          vehicleId,
-          driverId,
-          facePassed: faceState === "passed"
-        }
-      );
-
+      const response = await post("/api/access/check", {
+        vehicleId,
+        driverId,
+        facePassed: faceState === "passed"
+      });
       setResult(response);
-      setDeviceState("pending");
-
-      const command = response.accessGranted
-        ? "SUCCESS"
-        : "FAIL";
-
-      if (bleState === "connected") {
+      const command = response.accessGranted ? "SUCCESS" : "FAIL";
+      if (serialState === "connected") {
         try {
           await sendBLECommand(command);
-
-          setMessage(
-            "Access decision: " +
-            command +
-            " command sent to " +
-            bleName +
-            "."
-          );
-
+          setMessage("Final result " + command + " was sent to " + serialName + ".");
         } catch (error) {
-          setBleState("disconnected");
-
-          setMessage(
-            "Access decision recorded, but Bluetooth transmission failed: " +
-            error.message
-          );
+          setSerialState("disconnected");
+          setMessage("Decision was recorded, but HC-05 transmission failed: " + error.message);
         }
-
       } else {
-        setMessage(
-          "Access decision recorded. Connect the BLE module to transmit " +
-          command +
-          " to Arduino."
-        );
+        setMessage("Decision was recorded. Connect the HC-05 serial port to send " + command + " to Arduino.");
       }
-
-      setFaceState("pending");
-
-      setNotice(
-        response.accessGranted
-          ? "All demonstration access checks passed."
-          : "Access denied. At least one required check failed."
-      );
-
+      setNotice(response.accessGranted
+        ? "All demonstration checks passed."
+        : "Access denied. One or more required checks failed.");
     } catch (error) {
-      setMessage(
-        error.message || "Could not complete access check."
-      );
-
+      setMessage(error.message || "Could not complete the access check.");
     } finally {
       setBusy(false);
     }
   }
-
-  // ---------------------------------------------------
-  // RESET DEMO
-  // ---------------------------------------------------
 
   async function resetDemo() {
     setResult(null);
     setFaceState("pending");
     setDeviceState("pending");
-
     setMessage("New verification session started.");
-
-    if (bleState === "connected") {
+    if (serialState === "connected") {
       try {
         await sendBLECommand("RESET");
-
-        setMessage(
-          "Arduino reset. Ready for a new verification session."
-        );
-
+        setMessage("Arduino demonstration reset.");
       } catch (error) {
-        setBleState("disconnected");
-
-        setMessage(
-          "Could not send RESET: " + error.message
-        );
+        setSerialState("disconnected");
+        setMessage("Could not send RESET: " + error.message);
       }
     }
   }
 
-  const facePassed = faceState === "passed";
-
-  const faceComplete =
-    faceState === "passed" ||
-    faceState === "failed";
-
-  const deviceComplete =
-    deviceState === "passed" ||
-    deviceState === "failed";
-
-  const canCheck =
-    !!vehicleId &&
-    !!driverId &&
-    faceComplete &&
-    deviceComplete &&
-    !busy;
-
-  // ---------------------------------------------------
-  // VERIFICATION UI
-  // ---------------------------------------------------
+  const faceComplete = faceState === "passed" || faceState === "failed";
+  const deviceComplete = deviceState === "passed" || deviceState === "failed";
+  const canCheck = !!vehicleId && !!driverId && faceComplete && deviceComplete && !busy;
 
   return (
     <div className="verifyLayout">
-
       <section className="panel">
-
         <div className="verifyHeader">
-
           <div>
-            <div className="eyebrow">
-              BIOMETRIC ACCESS GATE
-            </div>
-
-            <h2>Verify your biometrics</h2>
+            <div className="eyebrow">BIOMETRIC ACCESS GATE</div>
+            <h2>Face recognition and device verification</h2>
           </div>
-
-          <span
-            className={
-              bleState === "connected"
-                ? "connection connected"
-                : "connection"
-            }
-          >
-            {bleState === "connected"
-              ? "BLE CONNECTED"
-              : "BLE DISCONNECTED"}
+          <span className={serialState === "connected" ? "connection connected" : "connection"}>
+            {serialState === "connected" ? "HC-05 CONNECTED" : "HC-05 DISCONNECTED"}
           </span>
-
         </div>
 
         <p className="muted">
-          Complete the two exhibition checks, then the server
-          evaluates licence validity and owner approval before
-          sending the final result to Arduino.
+          Enrol an authorised driver's face locally, compare a fresh camera capture, verify the registered passkey, then send a demonstration result to the Arduino LED.
         </p>
 
         <div className="blePanel">
-
           <div>
-            <b>Arduino Bluetooth connection</b>
-
+            <b>Arduino Uno + HC-05 serial connection</b>
             <small>
-              {bleState === "connected"
-                ? "Connected device: " + bleName
-                : "Connect to an HM-10-compatible BLE UART module."}
+              {serialState === "connected"
+                ? "Connected device: " + serialName
+                : "Pair HC-05 in Windows first. Use Chrome or Edge on HTTPS."}
             </small>
           </div>
-
-          <button
-            className="secondary"
-            onClick={connectHardware}
-            disabled={busy || bleState === "connected"}
-          >
-            {bleState === "connected"
-              ? "Connected"
-              : "Connect BLE module"}
+          <button className="secondary" onClick={connectHardware} disabled={busy || serialState === "connected"}>
+            {serialState === "connected" ? "Connected" : "Connect HC-05"}
           </button>
-
-          {bleState === "connected" && (
-            <button
-              className="mini"
-              onClick={() => {
-                disconnectBLE();
-                setBleState("disconnected");
-                setBleName("");
-              }}
-            >
-              Disconnect
-            </button>
+          {serialState === "connected" && (
+            <button className="mini" onClick={() => {
+              disconnectBLE();
+              setSerialState("disconnected");
+              setSerialName("");
+            }}>Disconnect</button>
           )}
-
         </div>
 
         <label>
           Vehicle
-
-          <select
-            value={vehicleId}
-            onChange={e => setVehicle(e.target.value)}
-          >
+          <select value={vehicleId} onChange={e => setVehicle(e.target.value)}>
             <option value="">Select vehicle</option>
-
-            {data.vehicles.map(v => (
-              <option value={v.id} key={v.id}>
-                {v.vehicleName}
-              </option>
-            ))}
+            {data.vehicles.map(v => <option value={v.id} key={v.id}>{v.vehicleName}</option>)}
           </select>
         </label>
 
         <label>
           Driver
-
-          <select
-            value={driverId}
-            onChange={e => setDriver(e.target.value)}
-          >
+          <select value={driverId} onChange={e => {
+            setDriver(e.target.value);
+            setFaceState("pending");
+            setDeviceState("pending");
+            setResult(null);
+            setMessage("");
+          }}>
             <option value="">Select driver</option>
-
-            {data.drivers.map(d => (
-              <option value={d.id} key={d.id}>
-                {d.name}
-              </option>
-            ))}
+            {data.drivers.map(d => <option value={d.id} key={d.id}>{d.name}</option>)}
           </select>
         </label>
 
-        {/* FACE VERIFICATION */}
-
         <div className="verificationStep">
-
           <div className="stepTitle">
-
             <span className="stepNumber">01</span>
-
             <div>
-              <b>Facial verification demonstration</b>
-
+              <b>Facial identity recognition</b>
               <small>
-                Camera face-presence check — not identity recognition
+                {enrolled ? "A local face template exists for this driver on this browser." : "No local face template found for the selected driver."}
               </small>
             </div>
-
-            <strong
-              className={
-                facePassed
-                  ? "good"
-                  : faceState === "failed"
-                    ? "bad"
-                    : ""
-              }
-            >
-              {faceState === "passed"
-                ? "PASS"
-                : faceState === "failed"
-                  ? "FAIL"
-                  : faceState === "checking"
-                    ? "CHECKING"
-                    : "PENDING"}
+            <strong className={faceState === "passed" ? "good" : faceState === "failed" ? "bad" : ""}>
+              {faceState === "passed" ? "MATCH" : faceState === "failed" ? "NO MATCH" : faceState === "checking" ? "CHECKING" : "PENDING"}
             </strong>
-
           </div>
 
           <video
             ref={videoRef}
             className="cameraPreview"
-            style={{
-              display: faceState === "checking"
-                ? "block"
-                : "none"
-            }}
+            style={{ display: cameraActive ? "block" : "none" }}
             autoPlay
             playsInline
             muted
           />
 
           <div className="stepActions">
-
-            <button
-              className="secondary"
-              onClick={runCameraFaceDemo}
-              disabled={busy || faceState === "checking"}
-            >
-              Start camera check
+            <button className="secondary" onClick={startCamera} disabled={busy || cameraActive || !driverId}>
+              Start camera
             </button>
-
-            <button
-              className="mini"
-              onClick={() => {
-                setFaceState("passed");
-                setMessage(
-                  "Simulated face check marked PASS for the exhibition."
-                );
-              }}
-            >
-              Simulate PASS
+            <button className="secondary" onClick={enrollSelectedFace} disabled={busy || !cameraActive || !driverId}>
+              Enrol selected driver's face
             </button>
-
-            <button
-              className="mini"
-              onClick={() => {
-                setFaceState("failed");
-                setMessage(
-                  "Simulated face check marked FAIL."
-                );
-              }}
-            >
-              Simulate FAIL
+            <button className="primary" onClick={runFaceRecognition} disabled={busy || !cameraActive || !driverId || !enrolled}>
+              Verify face
             </button>
-
+            <button className="mini" onClick={stopCamera} disabled={!cameraActive || busy}>Stop camera</button>
+            <button className="mini dangerBtn" onClick={() => {
+              if (driverId) {
+                deleteFaceTemplate(driverId);
+                setFaceState("pending");
+                setMessage("The local face template was deleted from this browser.");
+              }
+            }} disabled={!driverId || !enrolled || busy}>Delete enrolment</button>
           </div>
 
           <small className="muted">
-            If FaceDetector is unavailable in your browser,
-            use the clearly labelled simulation buttons for the
-            exhibition. No face images are uploaded or stored.
+            Face templates stay in this browser's local storage and are not uploaded. Anyone using this browser profile may be able to access local browser data; this is a classroom prototype, not secure biometric storage. Enrol only with the person's informed consent.
           </small>
-
         </div>
-
-        {/* DEVICE VERIFICATION */}
 
         <div className="verificationStep">
-
           <div className="stepTitle">
-
             <span className="stepNumber">02</span>
-
             <div>
-              <b>Device biometric verification</b>
-
-              <small>
-                WebAuthn passkey — fingerprint, face, or device PIN
-                depending on your device
-              </small>
+              <b>Device passkey verification</b>
+              <small>WebAuthn requests device user verification: biometric or device PIN, depending on device settings.</small>
             </div>
-
-            <strong
-              className={
-                deviceState === "passed"
-                  ? "good"
-                  : deviceState === "failed"
-                    ? "bad"
-                    : ""
-              }
-            >
-              {deviceState === "passed"
-                ? "VERIFIED"
-                : deviceState === "failed"
-                  ? "FAILED"
-                  : "PENDING"}
+            <strong className={deviceState === "passed" ? "good" : deviceState === "failed" ? "bad" : ""}>
+              {deviceState === "passed" ? "VERIFIED" : deviceState === "failed" ? "FAILED" : deviceState === "checking" ? "CHECKING" : "PENDING"}
             </strong>
-
           </div>
-
           <div className="stepActions">
-
-            <button
-              className="secondary"
-              onClick={verifyDevice}
-              disabled={busy}
-            >
-              Verify with device
-            </button>
-
-            <button
-              className="mini"
-              onClick={registerDevicePasskey}
-              disabled={busy}
-            >
-              Register passkey
-            </button>
-
-            <button
-              className="mini dangerBtn"
-              onClick={() => {
-                setDeviceState("failed");
-                setMessage(
-                  "Device verification marked FAIL for this demo."
-                );
-              }}
-              disabled={busy}
-            >
-              Simulate FAIL
-            </button>
-
+            <button className="secondary" onClick={verifyDevice} disabled={busy || deviceState === "passed"}>Verify with device</button>
+            <button className="mini" onClick={registerDevicePasskey} disabled={busy}>Register passkey</button>
           </div>
-
           <small className="muted">
-            Register a passkey once on this account. The browser/device
-            performs verification; the website never receives
-            fingerprint or face data.
+            Register a passkey once while signed in. The website receives the cryptographic credential result, not your face or fingerprint scan.
           </small>
-
         </div>
-
-        {/* FINAL ACTIONS */}
 
         <div className="stepActions finalActions">
-
-          <button
-            className="primary"
-            onClick={runAccessCheck}
-            disabled={!canCheck}
-          >
-            Evaluate & send to Arduino
+          <button className="primary" onClick={runAccessCheck} disabled={!canCheck}>
+            Evaluate &amp; send result to Arduino
           </button>
-
-          <button
-            className="mini"
-            onClick={resetDemo}
-            disabled={busy}
-          >
-            Reset session
-          </button>
-
+          <button className="mini" onClick={resetDemo} disabled={busy}>Reset session</button>
         </div>
 
-        {message && (
-          <div className="alert success">
-            {message}
-          </div>
-        )}
-
-        {/* RESULT */}
+        {message && <div className="alert success">{message}</div>}
 
         {result && (
           <div className="result">
-
             <h3 className={result.accessGranted ? "good" : "bad"}>
-              {result.accessGranted
-                ? "ACCESS GRANTED"
-                : "ACCESS DENIED"}
+              {result.accessGranted ? "DEMO APPROVED" : "DEMO REJECTED"}
             </h3>
-
             <div className="listRow">
-              Face camera demo
-
-              <b className={
-                result.biometricChecks?.faceResult
-                  ? "good"
-                  : "bad"
-              }>
-                {result.biometricChecks?.faceResult
-                  ? "PASS"
-                  : "FAIL"}
+              Face recognition
+              <b className={result.biometricChecks?.faceResult ? "good" : "bad"}>
+                {result.biometricChecks?.faceResult ? "PASS" : "FAIL"}
               </b>
             </div>
-
             <div className="listRow">
               Device verification
-
-              <b className={
-                result.biometricChecks?.deviceVerificationPassed
-                  ? "good"
-                  : "bad"
-              }>
-                {result.biometricChecks?.deviceVerificationPassed
-                  ? "PASS"
-                  : "FAIL"}
+              <b className={result.biometricChecks?.deviceVerificationPassed ? "good" : "bad"}>
+                {result.biometricChecks?.deviceVerificationPassed ? "PASS" : "FAIL"}
               </b>
             </div>
-
-            <div className="listRow">
-              Combined biometrics
-
-              <b className={result.logic[0] ? "good" : "bad"}>
-                {result.logic[0] ? "PASS" : "FAIL"}
-              </b>
-            </div>
-
             <div className="listRow">
               Licence validity
-
-              <b className={result.logic[1] ? "good" : "bad"}>
-                {result.logic[1] ? "PASS" : "FAIL"}
+              <b className={result.logic?.[1] ? "good" : "bad"}>
+                {result.logic?.[1] ? "PASS" : "FAIL"}
               </b>
             </div>
-
             <div className="listRow">
               Owner approval
-
-              <b className={result.logic[2] ? "good" : "bad"}>
-                {result.logic[2] ? "PASS" : "FAIL"}
+              <b className={result.logic?.[2] ? "good" : "bad"}>
+                {result.logic?.[2] ? "PASS" : "FAIL"}
               </b>
             </div>
-
-            <p className="muted">
-              Decision logic: Face AND Device Verification AND
-              Licence AND Owner Approval.
-            </p>
-
+            <p className="muted">All checks must pass for the demonstration to send SUCCESS. Otherwise it sends FAIL.</p>
           </div>
         )}
-
       </section>
 
-      {/* INFORMATION PANEL */}
-
       <aside className="panel infoPanel">
-
-        <h2>How the system works</h2>
-
+        <h2>System flow</h2>
         <ol>
-          <li>
-            Website checks camera face presence for the exhibition demo.
-          </li>
-
-          <li>
-            WebAuthn asks the device to verify its enrolled user.
-          </li>
-
-          <li>
-            Server checks the driver's licence date and owner approval.
-          </li>
-
-          <li>
-            Website sends SUCCESS or FAIL over BLE UART.
-          </li>
-
-          <li>
-            Arduino plays the matching melody and lights the LED.
-          </li>
+          <li>Enrol the driver's face with consent on this browser.</li>
+          <li>Compare a new camera capture with the local template.</li>
+          <li>Verify the passkey using the device.</li>
+          <li>The server checks the driver's licence and owner approval.</li>
+          <li>The browser sends SUCCESS or FAIL to the Arduino over HC-05 serial.</li>
         </ol>
-
         <p className="muted">
-          This is a classroom prototype, not a production identity
-          or vehicle-security system.
+          This project sends a result to an onboard LED for demonstration only. Do not connect it to vehicle ignition, locks or other safety-critical systems. Client-side face matching can be tampered with and is not production authentication.
         </p>
-
       </aside>
-
     </div>
   );
 }

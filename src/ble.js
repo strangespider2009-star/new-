@@ -1,70 +1,71 @@
-// Web Bluetooth UART bridge for HM-10-compatible BLE modules.
-// This is BLE GATT, not Bluetooth Classic SPP. HC-05 is not supported.
-const SERVICE_UUID = "0000ffe0-0000-1000-8000-00805f9b34fb";
-const CHARACTERISTIC_UUID = "0000ffe1-0000-1000-8000-00805f9b34fb";
-
-let bleDevice = null;
-let bleCharacteristic = null;
+// HC-05 uses Bluetooth Classic SPP, not BLE GATT.
+// Web Serial communicates with the Windows paired outgoing COM port.
+let serialPort = null;
+let serialWriter = null;
+let disconnectHandler = null;
 
 export async function connectBLE(onDisconnect = () => {}) {
   if (!window.isSecureContext) {
-    throw new Error("Bluetooth requires HTTPS (or localhost).");
+    throw new Error("Serial access requires HTTPS (or localhost).");
   }
-  if (!navigator.bluetooth) {
-    throw new Error("Web Bluetooth is unavailable. Use a supported browser such as Chrome on Android.");
+  if (!("serial" in navigator)) {
+    throw new Error("Web Serial is unavailable. Use Chrome or Edge on a supported desktop computer.");
   }
-
-  bleDevice = await navigator.bluetooth.requestDevice({
-    filters: [{ services: [SERVICE_UUID] }],
-    optionalServices: [SERVICE_UUID]
-  });
-
-  bleDevice.addEventListener("gattserverdisconnected", () => {
-    bleCharacteristic = null;
-    onDisconnect();
-  });
-
-  const server = await bleDevice.gatt.connect();
-  const service = await server.getPrimaryService(SERVICE_UUID);
-  bleCharacteristic = await service.getCharacteristic(CHARACTERISTIC_UUID);
-
-  if (
-    !bleCharacteristic.properties.write &&
-    !bleCharacteristic.properties.writeWithoutResponse
-  ) {
-    throw new Error("The BLE UART characteristic is not writable.");
+  if (serialPort) {
+    throw new Error("A serial device is already connected. Disconnect it first.");
   }
 
-  return bleDevice.name || "BLE UART device";
+  const port = await navigator.serial.requestPort();
+  await port.open({ baudRate: 9600 });
+
+  if (!port.writable) {
+    await port.close();
+    throw new Error("The selected serial port is not writable.");
+  }
+
+  serialPort = port;
+  serialWriter = port.writable.getWriter();
+
+  disconnectHandler = event => {
+    if (event.port === port) {
+      serialWriter = null;
+      serialPort = null;
+      onDisconnect();
+    }
+  };
+  navigator.serial.addEventListener("disconnect", disconnectHandler);
+
+  return "HC-05 serial port";
 }
 
 export async function sendBLECommand(command) {
-  if (!bleDevice?.gatt?.connected || !bleCharacteristic) {
-    throw new Error("Connect to the BLE module before sending a command.");
+  if (!serialPort || !serialWriter) {
+    throw new Error("Connect the paired HC-05 serial port first.");
   }
-
   if (!["SUCCESS", "FAIL", "RESET"].includes(command)) {
     throw new Error("Unsupported Arduino command.");
   }
 
   const payload = new TextEncoder().encode(command + "\n");
-
-  if (
-    bleCharacteristic.properties.writeWithoutResponse &&
-    !bleCharacteristic.properties.write
-  ) {
-    await bleCharacteristic.writeValueWithoutResponse(payload);
-  } else if (typeof bleCharacteristic.writeValueWithResponse === "function") {
-    await bleCharacteristic.writeValueWithResponse(payload);
-  } else {
-    await bleCharacteristic.writeValue(payload);
-  }
+  await serialWriter.write(payload);
 }
 
-export function disconnectBLE() {
-  if (bleDevice?.gatt?.connected) {
-    bleDevice.gatt.disconnect();
+export async function disconnectBLE() {
+  const port = serialPort;
+  const writer = serialWriter;
+
+  serialPort = null;
+  serialWriter = null;
+
+  if (disconnectHandler) {
+    navigator.serial?.removeEventListener("disconnect", disconnectHandler);
+    disconnectHandler = null;
   }
-  bleCharacteristic = null;
-  bleDevice = null;
+
+  if (writer) {
+    try { writer.releaseLock(); } catch {}
+  }
+  if (port) {
+    try { await port.close(); } catch {}
+  }
 }

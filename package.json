@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "vite build",
     "start": "node server/index.js",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "prebuild": "node scripts/copy-face-models.mjs",
+    "predev": "node scripts/copy-face-models.mjs"
   },
   "dependencies": {
     "@simplewebauthn/browser": "^14.0.0",
@@ -17,7 +19,8 @@
     "express-session": "^1.18.2",
     "multer": "^2.0.2",
     "react": "^19.1.0",
-    "react-dom": "^19.1.0"
+    "react-dom": "^19.1.0",
+    "@vladmandic/face-api": "1.7.15"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^5.0.0",
