@@ -521,6 +521,93 @@ app.post("/api/passkey/auth-verify", async (req, res) => {
 });
 
 // --------------------------------------------------
+// DEVICE BIOMETRIC STEP FOR EXHIBITION VERIFICATION
+// --------------------------------------------------
+
+app.post("/api/demo/device-auth-options", requireAuth, async (req, res) => {
+  try {
+    const passkeys = req.user.passkeys || [];
+    if (!passkeys.length) {
+      return res.status(400).json({
+        error: "No passkey is registered. Use Register passkey first."
+      });
+    }
+
+    const options = await generateAuthenticationOptions({
+      rpID: RP_ID,
+      allowCredentials: passkeys.map((p) => ({
+        id: p.id,
+        transports: p.transports
+      })),
+      userVerification: "required"
+    });
+
+    req.session.demoDeviceChallenge = options.challenge;
+    req.session.demoDeviceUserId = req.user.id;
+    res.json(options);
+  } catch (error) {
+    res.status(500).json({
+      error: error.message || "Could not start device verification."
+    });
+  }
+});
+
+app.post("/api/demo/device-auth-verify", requireAuth, async (req, res) => {
+  try {
+    if (
+      !req.session.demoDeviceChallenge ||
+      req.session.demoDeviceUserId !== req.user.id
+    ) {
+      return res.status(400).json({
+        error: "Device verification expired. Start the verification again."
+      });
+    }
+
+    const db = readDB();
+    const user = db.users.find((u) => u.id === req.user.id);
+    const credential = (user?.passkeys || []).find(
+      (p) => p.id === req.body.id
+    );
+
+    if (!credential) {
+      return res.status(401).json({ error: "Unknown device passkey." });
+    }
+
+    const verification = await verifyAuthenticationResponse({
+      response: req.body,
+      expectedChallenge: req.session.demoDeviceChallenge,
+      expectedOrigin: ORIGIN,
+      expectedRPID: RP_ID,
+      credential: {
+        id: credential.id,
+        publicKey: new Uint8Array(Buffer.from(credential.publicKey, "base64")),
+        counter: credential.counter,
+        transports: credential.transports
+      },
+      requireUserVerification: true
+    });
+
+    if (!verification.verified) {
+      return res.status(401).json({ error: "Device verification failed." });
+    }
+
+    credential.counter = verification.authenticationInfo.newCounter;
+    writeDB(db);
+
+    req.session.demoDeviceVerifiedAt = Date.now();
+    req.session.demoDeviceVerifiedUserId = req.user.id;
+    delete req.session.demoDeviceChallenge;
+    delete req.session.demoDeviceUserId;
+
+    res.json({ verified: true });
+  } catch (error) {
+    res.status(400).json({
+      error: error.message || "Device verification failed."
+    });
+  }
+});
+
+// --------------------------------------------------
 // DASHBOARD
 // --------------------------------------------------
 
@@ -839,36 +926,40 @@ app.post(
   "/api/access/check",
   requireAuth,
   async (req, res) => {
-    const {
-      driverId,
-      vehicleId,
-      localBiometricPassed
-    } = req.body || {};
-
+    const { driverId, vehicleId, facePassed } = req.body || {};
     const db = readDB();
 
     const driver = db.drivers.find(
-      (d) =>
-        d.id === driverId &&
-        d.ownerId === req.user.id
+      (d) => d.id === driverId && d.ownerId === req.user.id
     );
 
     const vehicle = db.vehicles.find(
-      (v) =>
-        v.id === vehicleId &&
-        v.ownerId === req.user.id
+      (v) => v.id === vehicleId && v.ownerId === req.user.id
     );
 
     const profile = driver?.biometricProfileId
       ? db.biometrics.find(
-          (b) =>
-            b.id === driver.biometricProfileId &&
-            b.ownerId === req.user.id
+          (b) => b.id === driver.biometricProfileId && b.ownerId === req.user.id
         )
       : null;
 
+    // A successful WebAuthn assertion is stored server-side and expires quickly.
+    const deviceVerificationPassed = Boolean(
+      req.session.demoDeviceVerifiedAt &&
+      req.session.demoDeviceVerifiedUserId === req.user.id &&
+      Date.now() - req.session.demoDeviceVerifiedAt <= 120000
+    );
+
+    // Consume the one-time device verification for this access attempt.
+    delete req.session.demoDeviceVerifiedAt;
+    delete req.session.demoDeviceVerifiedUserId;
+
+    // Face presence is a demonstration signal from the browser, not identity matching.
+    const faceResult = facePassed === true;
+
     const biometricResult =
-      !!localBiometricPassed &&
+      faceResult &&
+      deviceVerificationPassed &&
       !!profile &&
       profile.status === "active" &&
       profile.fingerprintRegistered &&
@@ -877,8 +968,7 @@ app.post(
 
     const licenceResult =
       !!driver &&
-      new Date(driver.expiryDate + "T23:59:59") >=
-        new Date();
+      new Date(driver.expiryDate + "T23:59:59") >= new Date();
 
     const ownerApproval = !!driver?.ownerApproved;
 
@@ -893,6 +983,8 @@ app.post(
       ownerId: req.user.id,
       driverId,
       vehicleId,
+      faceResult,
+      deviceVerificationPassed,
       biometricResult,
       licenceResult,
       ownerApproval,
@@ -904,15 +996,17 @@ app.post(
     writeDB(db);
 
     res.json({
+      faceResult,
+      deviceVerificationPassed,
       biometricResult,
       licenceResult,
       ownerApproval,
       accessGranted: granted,
-      logic: [
-        biometricResult,
-        licenceResult,
-        ownerApproval
-      ]
+      biometricChecks: {
+        faceResult,
+        deviceVerificationPassed
+      },
+      logic: [biometricResult, licenceResult, ownerApproval]
     });
   }
 );
