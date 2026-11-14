@@ -106,8 +106,10 @@ async function captureDescriptor(videoElement) {
     );
   }
 
-  const detection = await faceapi
-    .detectSingleFace(
+  // Enrolment and comparison are one-to-one. Never silently choose an
+  // arbitrary face when several people are visible in the camera.
+  const detections = await faceapi
+    .detectAllFaces(
       videoElement,
       new faceapi.TinyFaceDetectorOptions({
         inputSize: 320,
@@ -115,15 +117,29 @@ async function captureDescriptor(videoElement) {
       })
     )
     .withFaceLandmarks()
-    .withFaceDescriptor();
+    .withFaceDescriptors();
 
-  if (!detection) {
+  if (detections.length === 0) {
     throw new Error(
       "No clear face was detected. Improve lighting, face the camera and try again."
     );
   }
 
-  return Array.from(detection.descriptor);
+  if (detections.length !== 1) {
+    throw new Error(
+      "Multiple faces detected. Keep exactly one consenting person in the frame."
+    );
+  }
+
+  const descriptor = Array.from(detections[0].descriptor);
+  if (
+    descriptor.length !== 128 ||
+    !descriptor.every(Number.isFinite)
+  ) {
+    throw new Error("Invalid face descriptor. Please retry the capture.");
+  }
+
+  return descriptor;
 }
 
 function averageDescriptors(descriptors) {
@@ -242,7 +258,10 @@ export async function recognizeFace(videoElement, driverId) {
   if (
     !template ||
     template.version !== 1 ||
-    !Array.isArray(template.descriptor)
+    template.driverId !== String(driverId) ||
+    !Array.isArray(template.descriptor) ||
+    template.descriptor.length !== 128 ||
+    !template.descriptor.every(Number.isFinite)
   ) {
     throw new Error(
       "No valid face template is enrolled for this driver in this browser."
