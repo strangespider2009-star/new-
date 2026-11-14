@@ -25,12 +25,18 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 const isProduction = process.env.NODE_ENV === "production";
 
-const FRONTEND_ORIGIN =
+// The origin is where the browser runs WebAuthn, not the API's hostname.
+// Use the local Vite origin during development; require explicit RP values in production.
+const FRONTEND_ORIGIN = (
   process.env.FRONTEND_ORIGIN ||
-  "https://smart-drive-guard-frontend.onrender.com";
+  process.env.ORIGIN ||
+  (isProduction
+    ? "https://smart-drive-guard-frontend.onrender.com"
+    : "http://localhost:5173")
+).replace(/\/+$/, "");
 
 const RP_ID = process.env.RP_ID || "localhost";
-const ORIGIN = process.env.ORIGIN || "http://localhost:5173";
+const ORIGIN = process.env.ORIGIN || FRONTEND_ORIGIN;
 
 const SESSION_SECRET =
   process.env.SESSION_SECRET ||

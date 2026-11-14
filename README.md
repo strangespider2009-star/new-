@@ -36,13 +36,21 @@ On Windows PowerShell:
 Copy-Item .env.example .env
 ```
 
-Then:
+Start the backend and frontend in **two terminals** from the repository root.
+
+Terminal 1 (Node.js 20.6+):
+```bash
+node --env-file=.env server/index.js
+```
+
+Terminal 2:
 ```bash
 npm run dev
 ```
+
 Open http://localhost:5173
 
-The backend runs on http://localhost:3001. Vite proxies `/api` and `/uploads`.
+The backend runs on http://localhost:3001. `npm run dev` starts **only Vite**; it does not start Express. The frontend calls the API at port 3001 in local development.
 
 ## First use
 1. Register an account with role `owner`.
@@ -65,6 +73,8 @@ Passkey sign-in flow:
 - `POST /api/passkey/auth-verify` with the credential response
 
 The default demo UI provides password login and passkey sign-in. To register a passkey, add a button after login that runs the registration flow above. This avoids silently enrolling a device without the user's consent.
+
+For facial-recognition setup, passkey testing, and Render-specific configuration, see [FACE_RECOGNITION_SETUP.md](FACE_RECOGNITION_SETUP.md).
 
 ## Production deployment checklist
 Before public deployment:
