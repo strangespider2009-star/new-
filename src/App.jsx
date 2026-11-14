@@ -24,9 +24,12 @@ import {
 // API CONFIGURATION
 // =====================================================
 
+// Local development runs the API on :3001. In production, default to
+// same-origin requests (Express can serve dist). Separate static frontend
+// deployments must set VITE_API_URL at build time.
 const API_BASE = (
   import.meta.env.VITE_API_URL ||
-  "http://localhost:3001"
+  (import.meta.env.PROD ? window.location.origin : "http://localhost:3001")
 ).replace(/\/+$/, "");
 
 const api = async (url, options = {}) => {
@@ -1445,7 +1448,10 @@ function Verify({ data, setNotice }) {
       const options = await post("/api/demo/device-auth-options", {});
       const credential = await startAuthentication({ optionsJSON: options });
       const response = await post("/api/demo/device-auth-verify", credential);
-      setDeviceState(response.verified ? "passed" : "failed");
+      if (!response.verified) {
+        throw new Error("The device did not complete verification.");
+      }
+      setDeviceState("passed");
       setMessage("Device user verification completed. The device may have used its configured biometric or PIN.");
     } catch (error) {
       setDeviceState("failed");
@@ -1461,7 +1467,11 @@ function Verify({ data, setNotice }) {
     try {
       const options = await post("/api/passkey/register-options", {});
       const credential = await startRegistration({ optionsJSON: options });
-      await post("/api/passkey/register-verify", credential);
+      const response = await post("/api/passkey/register-verify", credential);
+      if (!response.verified) {
+        throw new Error("Passkey registration was not verified by the server.");
+      }
+      setDeviceState("pending");
       setMessage("Passkey registered. Now run device verification.");
     } catch (error) {
       setMessage(error.message || "Passkey registration failed.");
